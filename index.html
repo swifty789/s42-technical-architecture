@@ -217,21 +217,25 @@
         <!-- About -->
         <div class="card">
             <h2>About This Document</h2>
-            <p>This document provides a complete visual reference for the Signal OS platform architecture — the foundation layer that powers all S42 Labs AI products. Every diagram is derived directly from the production codebase in the <code>signal-core-memory-knowledge</code> monorepo, not from design docs or aspirational plans.</p>
+            <p>Signal OS is the platform that sits behind every AI product S42 Labs builds. Think of it as the engine room — it handles everything from understanding a user's question, to searching through company documents for relevant information, to generating an intelligent answer with proper source references.</p>
+            <p>This document maps out how that engine room is constructed. Every diagram here is drawn directly from the production codebase (the code that's actually running), not from aspirational plans or slide decks.</p>
             <h3>Who Is This For?</h3>
             <ul>
                 <li><strong>Technical leads and architects</strong> evaluating S42 Labs' platform — use this as a credentials reference to understand the depth of the RAG pipeline, memory architecture, and multi-provider LLM strategy.</li>
+                <li><strong>Product and commercial stakeholders</strong> who want to understand what Signal OS actually does, how data moves through the system, and why the architecture is built the way it is — without needing to read code.</li>
                 <li><strong>Internal team members</strong> needing a single-page reference for how data flows through the system, which ports to use, and which LLM handles which task.</li>
             </ul>
             <h3>How To Use This Document</h3>
-            <p>The diagrams are ordered from high-level (full system overview) down to specific subsystems. Start with Diagram 1 and Diagram 5 to get the big picture, then drill into subsystem diagrams as needed.</p>
+            <p>The diagrams are ordered from big picture down to specific subsystems. <strong>If you're new to the platform</strong>, start with Diagram 1 (the full architecture — how everything connects) and Diagram 5 (the end-to-end data flow — what happens step by step when a document is uploaded or a question is asked). Those two give you the full story. The remaining diagrams zoom into individual pieces for when you want more detail.</p>
+            <p>You can click any diagram to expand it to full-screen for a closer look.</p>
             <h3>Monorepo Structure</h3>
+            <p>The platform is organised as a <strong>monorepo</strong> — a single code repository that contains three separate services, each responsible for a distinct part of the system. Here's what each one does:</p>
             <div class="table-wrap">
                 <table>
-                    <tr><th>Package</th><th>Service</th><th>Port</th><th>Primary Database</th></tr>
-                    <tr><td><code>packages/memory/</code></td><td>Memory Service</td><td>:8000</td><td>MongoDB</td></tr>
-                    <tr><td><code>packages/doc-ingestion/</code></td><td>Doc-Ingestion Service</td><td>:8009</td><td>PostgreSQL</td></tr>
-                    <tr><td><code>packages/rag-engine/</code></td><td>RAG Engine</td><td>:8008</td><td>Pinecone (external)</td></tr>
+                    <tr><th>Package</th><th>Service</th><th>Port</th><th>Primary Database</th><th>Description</th></tr>
+                    <tr><td><code>packages/memory/</code></td><td>Memory Service</td><td>:8000</td><td>MongoDB</td><td>The central orchestrator. Receives every user message, gathers relevant context (user profile, company data, past conversations, calendar, tasks), and sends it all to the AI for a personalised response.</td></tr>
+                    <tr><td><code>packages/doc-ingestion/</code></td><td>Doc-Ingestion Service</td><td>:8009</td><td>PostgreSQL</td><td>Processes uploaded documents (PDFs, Word files, spreadsheets, etc.) through an 11-step AI pipeline that extracts, validates, and chunks content so it can be searched later.</td></tr>
+                    <tr><td><code>packages/rag-engine/</code></td><td>RAG Engine</td><td>:8008</td><td>Pinecone (external)</td><td>The search and answer engine. When a user asks a question, this service finds the most relevant document passages, ranks them by relevance, and generates an answer with source citations.</td></tr>
                 </table>
             </div>
             <p>A <code>shared/</code> directory contains cross-package utilities, and <code>docker-compose.yml</code> at the root orchestrates all services and infrastructure.</p>
@@ -255,9 +259,11 @@
         <section id="signal-os" class="card section-card">
             <div class="section-heading"><span class="section-number">1</span><h2>Signal OS — Full Memory RAG Architecture</h2></div>
             <div class="body">
-                <p>This is the top-level system diagram. It shows all three core services, their internal components, the shared infrastructure layer, and every external API dependency.</p>
-                <p>The architecture follows a service-oriented pattern where the <strong>Memory Service</strong> acts as the primary orchestrator — it receives user messages, assembles context from multiple sources, and delegates document retrieval to the <strong>RAG Engine</strong>. The <strong>Doc-Ingestion Service</strong> operates semi-independently, processing uploaded documents through an 11-node LangGraph pipeline.</p>
-                <p>All three services communicate via HTTP APIs over a shared Docker network. Infrastructure services (MongoDB, PostgreSQL, Redis, MinIO) are containerised alongside the application services.</p>
+                <p>This is the big picture. It shows the entire platform — every service, every database, and every external AI provider — on a single page. If you only look at one diagram, make it this one.</p>
+                <p>At the centre is the <strong>Memory Service</strong> — the orchestrator. When a user sends a message, it gathers everything the AI needs to respond well: who the user is, what company they work for, what they've asked before, what's on their calendar, and any relevant documents. It then passes all of that context to the AI model for a personalised response.</p>
+                <p>The <strong>Doc-Ingestion Service</strong> handles the other side of the equation: getting documents <em>into</em> the system. When someone uploads a PDF or Word document, this service processes it through an 11-step pipeline that extracts content, validates quality, and breaks it into searchable chunks.</p>
+                <p>The <strong>RAG Engine</strong> sits between the two — it stores the processed document chunks and retrieves the most relevant ones when a user asks a question. RAG stands for "Retrieval-Augmented Generation", which simply means the AI doesn't guess from memory — it searches your actual documents first, then generates an answer based on what it finds.</p>
+                <p>All three services communicate over a shared network, with databases (MongoDB, PostgreSQL, Redis, MinIO) running alongside them. External AI services — embedding models, vector search, language models — are called over the internet.</p>
             </div>
             <div class="diagram-wrapper" onclick="expandDiagram(this)"><div class="expand-hint">Click to expand</div><pre class="mermaid">
 graph TB
@@ -338,9 +344,9 @@ graph TB
         <section id="context-assembly" class="card section-card">
             <div class="section-heading"><span class="section-number">2</span><h2>Memory Service — Context Assembly</h2></div>
             <div class="body">
-                <p>The Memory Service is the brain of Signal OS. Its core component is the <strong>Data Controller</strong> (<code>app/services/data_controller.py</code>), which assembles a personalised context object for every AI interaction.</p>
-                <p>What makes this architecture distinctive is the <strong>Service Manifest</strong> system. Each AI service declares a YAML manifest specifying exactly what context it needs. This selective fetching keeps context lean and relevant, avoiding the "throw everything at the LLM" antipattern.</p>
-                <p>The learning loop is equally important: after every response, <strong>LangMem</strong> extracts patterns and writes them back to <strong>Mem0</strong>, so the system gets smarter over time.</p>
+                <p>The Memory Service is the brain of Signal OS. Every time a user sends a message, this service decides: <em>what does the AI need to know in order to give a genuinely useful response?</em></p>
+                <p>The answer varies depending on the situation. An executive assistant AI needs calendar events and task lists. A sales coaching AI needs client documents and CRM data. A general assistant might need a bit of everything. Rather than loading all available context every time (which is slow and wasteful), the system uses <strong>Service Manifests</strong> — simple configuration files that define exactly what each AI service needs. The <strong>Data Controller</strong> (<code>app/services/data_controller.py</code>) reads the relevant manifest and fetches only the required context.</p>
+                <p>The system also <strong>learns over time</strong>. After every interaction, a component called <strong>LangMem</strong> analyses the conversation for useful patterns — user preferences, communication style, recurring topics — and stores those learnings in a memory layer called <strong>Mem0</strong>. Next time, the AI has those insights available, so responses improve with use.</p>
             </div>
             <div class="diagram-wrapper" onclick="expandDiagram(this)"><div class="expand-hint">Click to expand</div><pre class="mermaid">
 graph LR
@@ -369,7 +375,7 @@ graph LR
     LEARN --> M0
             </pre></div>
             <h3 class="sub-heading">Service Manifests</h3>
-            <p>Manifests are YAML files stored in <code>packages/memory/backend/app/manifests/</code>. Each one declares a <code>requires</code> block that controls what the Data Controller fetches. Tenant configuration supports parent-child inheritance.</p>
+            <p>Manifests are simple configuration files (written in YAML) stored in <code>packages/memory/backend/app/manifests/</code>. Each one acts as a shopping list — it tells the Data Controller exactly which pieces of context to fetch. For example, the executive assistant manifest might request calendar events, tasks, and the user profile, while skipping client documents entirely. This keeps each AI service focused and efficient.</p>
             <div class="diagram-wrapper" onclick="expandDiagram(this)"><div class="expand-hint">Click to expand</div><pre class="mermaid">
 graph TD
     subgraph MANIFESTS["Available Manifests"]
@@ -386,9 +392,10 @@ graph TD
         <section id="doc-ingestion" class="card section-card">
             <div class="section-heading"><span class="section-number">3</span><h2>Doc-Ingestion — 11-Node LangGraph Pipeline</h2></div>
             <div class="body">
-                <p>The Doc-Ingestion Service transforms raw documents into high-quality, RAG-ready chunks via an 11-node LangGraph pipeline (<code>app/graph/graph.py</code>).</p>
-                <p>The pipeline's most notable design feature is <strong>conditional routing at the size_check node</strong>. Documents with images go through a vision node (Gemini 3 Flash), documents with tables go through table extraction, and text-only documents skip straight to AI metadata extraction.</p>
-                <p>Every major stage saves a <strong>checkpoint to PostgreSQL</strong>, allowing resume from the last successful stage on failure. The pipeline ends with a <strong>manual approval gate</strong>. Batch processing uses a <strong>Celery worker</strong> backed by Redis. Files are stored in <strong>MinIO</strong>.</p>
+                <p>Before the AI can search a document, that document needs to be <em>understood</em> — parsed, analysed, validated, and broken into meaningful chunks. This is what the Doc-Ingestion Service does, and it's more involved than most people expect.</p>
+                <p>The service runs each document through an <strong>11-step processing pipeline</strong> (<code>app/graph/graph.py</code>). Each step is a "node" in a graph, and the path a document takes depends on its content. A PDF with images is routed through a vision AI (Gemini 3 Flash) to describe those images. A spreadsheet with tables goes through table extraction. A plain text file skips straight to AI-powered metadata extraction. This conditional routing means each document gets the processing it actually needs.</p>
+                <p>The pipeline is designed to be <strong>resilient</strong>. At every major stage, progress is saved to the database (a "checkpoint"). If something fails at step 7, the system can resume from step 6 rather than starting over. The final step is a <strong>manual approval gate</strong> — a human reviews the processed output before it enters the search index. This keeps quality high and prevents bad data from polluting the knowledge base.</p>
+                <p>For bulk uploads, a background worker (Celery, backed by Redis) handles batch processing. All original files are stored in MinIO, an S3-compatible object store.</p>
             </div>
             <div class="diagram-wrapper" onclick="expandDiagram(this)"><div class="expand-hint">Click to expand</div><pre class="mermaid">
 graph TD
@@ -420,7 +427,7 @@ graph TD
     PARSE --> PARSERS
             </pre></div>
             <h3 class="sub-heading">Checkpoint System</h3>
-            <p>Checkpoints are persisted to PostgreSQL via <code>app/graph/checkpoints.py</code>. Six stages are checkpointed: metadata, parsing, extraction, validation, chunking, and completion.</p>
+            <p>Processing a large document can take several minutes. If something fails midway (a network timeout, an AI model rate limit), you don't want to start over from scratch. The checkpoint system saves progress to PostgreSQL at six key stages. If a failure occurs, processing resumes from the last successful checkpoint — saving time and compute cost.</p>
             <div class="diagram-wrapper" onclick="expandDiagram(this)"><div class="expand-hint">Click to expand</div><pre class="mermaid">
 graph LR
     subgraph CHECKPOINTS["Checkpoint Stages (PostgreSQL)"]
@@ -440,9 +447,16 @@ graph LR
         <section id="rag-engine" class="card section-card">
             <div class="section-heading"><span class="section-number">4</span><h2>RAG Engine — 5-Node Query Pipeline</h2></div>
             <div class="body">
-                <p>The query pipeline is a 5-node LangGraph graph implementing: <strong>embed → search → rerank → compress → generate</strong>.</p>
-                <p><strong>Embed</strong> uses Voyage AI's <code>voyage-multimodal-3.5</code> (1024-dim). <strong>Search</strong> performs hybrid retrieval against Pinecone (dense + sparse BM25). <strong>Rerank</strong> uses Jina AI. <strong>Compress</strong> reduces context to fit token limits. <strong>Generate</strong> routes to the appropriate LLM.</p>
-                <p>The pipeline returns a confidence score plus full source metadata for attribution. LangSmith traces every run.</p>
+                <p>When a user asks a question, this is the service that finds the answer. The RAG Engine runs a <strong>5-step pipeline</strong> that takes a question and returns an answer with source citations — similar to how a researcher would search through documents, pick the most relevant passages, and synthesise a response.</p>
+                <p>Here's what each step does:</p>
+                <ul>
+                    <li><strong>Embed:</strong> Converts the question into a numerical representation (a "vector") using Voyage AI. This allows the system to search by meaning, not just keyword matching.</li>
+                    <li><strong>Search:</strong> Queries the Pinecone vector database using two strategies simultaneously — meaning-based search (dense) and keyword-based search (sparse/BM25) — for the best of both worlds.</li>
+                    <li><strong>Rerank:</strong> Takes the initial search results and re-scores them using Jina AI, a specialist reranking model, to push the most truly relevant results to the top.</li>
+                    <li><strong>Compress:</strong> Trims the selected passages down to fit within the AI model's context window (there's a limit to how much text you can send to an LLM at once).</li>
+                    <li><strong>Generate:</strong> Sends the compressed context to the appropriate language model, which produces the final answer along with source references.</li>
+                </ul>
+                <p>Every query also returns a <strong>confidence score</strong>, and every pipeline run is traced via LangSmith for observability and debugging.</p>
             </div>
             <div class="diagram-wrapper" onclick="expandDiagram(this)"><div class="expand-hint">Click to expand</div><pre class="mermaid">
 graph TD
@@ -461,7 +475,7 @@ graph TD
     GENERATE --> LLM_CHAIN
             </pre></div>
             <h3 class="sub-heading">Pinecone Vector Store Structure</h3>
-            <p>Single Pinecone serverless index (<code>s42-rag</code>) with namespace-level client isolation. A single query can only target one namespace.</p>
+            <p>All document vectors (the numerical representations of meaning) are stored in a single Pinecone index called <code>s42-rag</code>. Within that index, each client's data lives in its own isolated <strong>namespace</strong> — like separate filing cabinets in the same room. When a query runs, it only searches within the relevant client's namespace, ensuring strict data separation. Cross-client search is not possible from a single query.</p>
             <div class="diagram-wrapper" onclick="expandDiagram(this)"><div class="expand-hint">Click to expand</div><pre class="mermaid">
 graph TD
     INDEX["Pinecone Index: s42-rag"] --> NS1["Namespace: rag-testing<br/>(713 vectors)"]
@@ -478,9 +492,9 @@ graph TD
         <section id="data-flow" class="card section-card">
             <div class="section-heading"><span class="section-number">5</span><h2>Full Data Flow — Upload to Answer</h2></div>
             <div class="body">
-                <p>This sequence diagram shows the complete end-to-end journey: document ingestion and query answering.</p>
-                <p><strong>Phase 1 (Ingestion):</strong> Upload → MinIO → 11-node pipeline → PostgreSQL checkpoints → human approval → RAG Engine → Voyage AI embeddings → Pinecone.</p>
-                <p><strong>Phase 2 (Query):</strong> Question → Memory Service → MongoDB context → service manifest → RAG Engine → embed → hybrid search → rerank → compress → LLM → response with sources → LangMem learning extraction.</p>
+                <p>This diagram tells the full story in two phases. Read it top to bottom — it shows exactly what happens at each step, which service is responsible, and where data moves.</p>
+                <p><strong>Phase 1 — Getting documents in (Ingestion):</strong> A user uploads a document. The file is stored in MinIO (object storage). The Doc-Ingestion Service processes it through the 11-step pipeline, saving checkpoints along the way. Once a human approves the output, the processed chunks are sent to the RAG Engine, which generates vector embeddings (numerical representations of meaning) and stores them in Pinecone for fast retrieval.</p>
+                <p><strong>Phase 2 — Answering a question (Query):</strong> A user asks a question. The Memory Service picks up the message, gathers the user's profile, company config, and operational context (calendar, tasks, etc.) from MongoDB, then forwards the question to the RAG Engine. The RAG Engine searches the vector store, re-ranks results, compresses context, sends it to the language model, and returns an answer with source citations. Finally, the Memory Service analyses the conversation to extract useful learnings for next time.</p>
             </div>
             <div class="diagram-wrapper" onclick="expandDiagram(this)"><div class="expand-hint">Click to expand</div><pre class="mermaid">
 sequenceDiagram
@@ -526,8 +540,9 @@ sequenceDiagram
         <section id="infrastructure" class="card section-card">
             <div class="section-heading"><span class="section-number">6</span><h2>Infrastructure &amp; Deployment</h2></div>
             <div class="body">
-                <p>The entire platform runs as a Docker Compose stack: 6 application services and 4 infrastructure services. External AI services are called over HTTPS. Production targets Fly.io.</p>
-                <p>Key dependency chains: Doc-Ingestion depends on PostgreSQL, Redis, and MinIO. Memory depends on MongoDB. MinIO has an init container that creates required buckets on first run.</p>
+                <p>All the services and databases described above need somewhere to run. This section shows the <strong>infrastructure layer</strong> — the containers, databases, and deployment targets that make the platform operational.</p>
+                <p>In development, the entire platform runs locally via <strong>Docker Compose</strong> — a tool that starts all 10 services (6 application + 4 infrastructure) with a single command. In production, the platform is deployed to <strong>Fly.io</strong>, a cloud hosting provider. External AI services (Pinecone, Voyage AI, Jina AI, LLM providers) are called over the internet rather than being self-hosted.</p>
+                <p>The diagram below shows which services depend on which databases. For example, the Doc-Ingestion Service needs PostgreSQL (for processing state), Redis (for the task queue), and MinIO (for file storage). The Memory Service only needs MongoDB. Understanding these dependencies matters when troubleshooting — if PostgreSQL is down, doc-ingestion stops, but the Memory Service and RAG Engine keep working.</p>
             </div>
             <div class="diagram-wrapper" onclick="expandDiagram(this)"><div class="expand-hint">Click to expand</div><pre class="mermaid">
 graph TB
@@ -570,20 +585,20 @@ graph TB
     end
             </pre></div>
             <h3 class="sub-heading">Port Registry</h3>
-            <p>All ports are defined in <code>docker-compose.yml</code>. External-facing ports are mapped to avoid conflicts with common local development services.</p>
+            <p>Each service listens on a specific port number — think of ports as numbered doors that let you reach the right service. All ports are defined in <code>docker-compose.yml</code> and are mapped to avoid conflicts with other software that might be running on the same machine.</p>
             <div class="table-wrap">
                 <table>
-                    <tr><th>Port</th><th>Service</th><th>Type</th></tr>
-                    <tr><td style="font-family:monospace;font-size:13px">3008</td><td>RAG Engine Frontend</td><td><span class="badge badge-ui">UI</span></td></tr>
-                    <tr><td style="font-family:monospace;font-size:13px">5173</td><td>Doc-Ingestion Frontend</td><td><span class="badge badge-ui">UI</span></td></tr>
-                    <tr><td style="font-family:monospace;font-size:13px">8000</td><td>Memory Service</td><td><span class="badge badge-api">API</span></td></tr>
-                    <tr><td style="font-family:monospace;font-size:13px">8008</td><td>RAG Engine</td><td><span class="badge badge-api">API</span></td></tr>
-                    <tr><td style="font-family:monospace;font-size:13px">8009</td><td>Doc-Ingestion</td><td><span class="badge badge-api">API</span></td></tr>
-                    <tr><td style="font-family:monospace;font-size:13px">9000</td><td>MinIO API</td><td><span class="badge badge-other">Storage</span></td></tr>
-                    <tr><td style="font-family:monospace;font-size:13px">9001</td><td>MinIO Console</td><td><span class="badge badge-other">Admin</span></td></tr>
-                    <tr><td style="font-family:monospace;font-size:13px">27017</td><td>MongoDB</td><td><span class="badge badge-db">Database</span></td></tr>
-                    <tr><td style="font-family:monospace;font-size:13px">5433</td><td>PostgreSQL</td><td><span class="badge badge-db">Database</span></td></tr>
-                    <tr><td style="font-family:monospace;font-size:13px">6380</td><td>Redis</td><td><span class="badge badge-other">Cache/Queue</span></td></tr>
+                    <tr><th>Port</th><th>Service</th><th>Type</th><th>Description</th></tr>
+                    <tr><td style="font-family:monospace;font-size:13px">3008</td><td>RAG Engine Frontend</td><td><span class="badge badge-ui">UI</span></td><td>Web interface for testing search queries against the RAG Engine and reviewing results.</td></tr>
+                    <tr><td style="font-family:monospace;font-size:13px">5173</td><td>Doc-Ingestion Frontend</td><td><span class="badge badge-ui">UI</span></td><td>Web interface for uploading documents, monitoring pipeline progress, and approving processed content.</td></tr>
+                    <tr><td style="font-family:monospace;font-size:13px">8000</td><td>Memory Service</td><td><span class="badge badge-api">API</span></td><td>The main API that client applications talk to. Handles chat messages, context assembly, and memory management.</td></tr>
+                    <tr><td style="font-family:monospace;font-size:13px">8008</td><td>RAG Engine</td><td><span class="badge badge-api">API</span></td><td>Search and answer API. Called by the Memory Service to find relevant documents and generate answers.</td></tr>
+                    <tr><td style="font-family:monospace;font-size:13px">8009</td><td>Doc-Ingestion</td><td><span class="badge badge-api">API</span></td><td>Document processing API. Receives file uploads and manages the 11-step ingestion pipeline.</td></tr>
+                    <tr><td style="font-family:monospace;font-size:13px">9000</td><td>MinIO API</td><td><span class="badge badge-other">Storage</span></td><td>S3-compatible object storage for uploaded files. Stores original documents and processed outputs.</td></tr>
+                    <tr><td style="font-family:monospace;font-size:13px">9001</td><td>MinIO Console</td><td><span class="badge badge-other">Admin</span></td><td>Web-based admin dashboard for browsing stored files, managing buckets, and monitoring storage usage.</td></tr>
+                    <tr><td style="font-family:monospace;font-size:13px">27017</td><td>MongoDB</td><td><span class="badge badge-db">Database</span></td><td>Document database used by the Memory Service. Stores user profiles, tenant configs, conversation history, and learned memories.</td></tr>
+                    <tr><td style="font-family:monospace;font-size:13px">5433</td><td>PostgreSQL</td><td><span class="badge badge-db">Database</span></td><td>Relational database used by Doc-Ingestion. Stores document metadata, processing state, and pipeline checkpoints.</td></tr>
+                    <tr><td style="font-family:monospace;font-size:13px">6380</td><td>Redis</td><td><span class="badge badge-other">Cache/Queue</span></td><td>In-memory data store used as a task queue for batch document processing (Celery workers pick up jobs from here).</td></tr>
                 </table>
             </div>
         </section>
@@ -592,9 +607,10 @@ graph TB
         <section id="llm-routing" class="card section-card">
             <div class="section-heading"><span class="section-number">7</span><h2>LLM Model Routing</h2></div>
             <div class="body">
-                <p>The LLM Router (<code>packages/rag-engine/backend/app/services/llm_router.py</code>) routes requests based on task type with automatic fallback and exponential backoff.</p>
-                <p><strong>Task-specific model selection:</strong> Gemini 3 Flash for extraction, vision, and generation (cost/speed). Claude Sonnet 4.5 for validation (accuracy). Each has defined fallbacks.</p>
-                <p><strong>Provider-specific parameters:</strong> Anthropic uses standard temperature. OpenAI uses <code>verbosity</code> + <code>reasoning_effort</code>. Google <strong>must</strong> use temperature=1.0 and uses <code>thinking_level</code> instead. The router handles these mappings transparently.</p>
+                <p>Signal OS doesn't rely on a single AI model — it uses <strong>multiple models from different providers</strong> (Google, Anthropic, OpenAI), each chosen for the task it's best at. The <strong>LLM Router</strong> (<code>packages/rag-engine/backend/app/services/llm_router.py</code>) is the component that makes this selection automatically.</p>
+                <p><strong>Why not just use one model for everything?</strong> Because different tasks have different trade-offs. Extracting metadata from a document needs speed and low cost — that's Gemini 3 Flash. Validating whether content is accurate needs precision — that's Claude Sonnet 4.5. By matching tasks to the right model, the system balances quality, speed, and cost.</p>
+                <p><strong>Automatic fallback:</strong> If the primary model is unavailable (provider outage, rate limit), the router automatically tries the next model in the chain. This means the platform stays operational even if a single AI provider goes down.</p>
+                <p>Each provider also has slightly different configuration requirements (Anthropic uses "temperature", Google requires temperature=1.0 and uses "thinking_level", OpenAI uses "verbosity" and "reasoning_effort"). The router handles all of these differences transparently, so the rest of the codebase doesn't need to know which provider is being used.</p>
             </div>
             <div class="diagram-wrapper" onclick="expandDiagram(this)"><div class="expand-hint">Click to expand</div><pre class="mermaid">
 graph TD
