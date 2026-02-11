@@ -110,7 +110,7 @@
             opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 10;
         }
         .diagram-wrapper:hover .expand-hint { opacity: 1; }
-        .mermaid svg { height: auto; }
+        .mermaid svg { max-width: 100%; height: auto; }
 
         /* ── Code ── */
         code {
@@ -160,7 +160,7 @@
         .modal-close:hover { background: var(--grey-200); color: var(--grey-900); }
         .modal-body { flex: 1; overflow: auto; padding: 24px; display: flex; align-items: flex-start; justify-content: center; }
         @media (min-width: 768px) { .modal-body { padding: 40px; } }
-        .modal-body svg { min-width: min-content; height: auto; }
+        .modal-body svg { height: auto; }
 
         /* ── Footer ── */
         footer { text-align: center; padding: 28px 0; font-size: 13px; color: var(--grey-400); }
@@ -671,37 +671,71 @@ graph TD
     </div>
 
     <script>
+        var mermaidTheme = {
+            fontSize: '16px',
+            fontFamily: 'Inter Tight, system-ui, sans-serif',
+            primaryColor: '#6B2FA0',
+            primaryTextColor: '#fff',
+            primaryBorderColor: '#5A2590',
+            lineColor: '#666',
+            secondaryColor: '#f5f5f5',
+            tertiaryColor: '#fafafa'
+        };
+
+        /* Save original mermaid source before rendering replaces it */
+        document.querySelectorAll('.diagram-wrapper').forEach(function(wrapper, i) {
+            var pre = wrapper.querySelector('pre.mermaid');
+            if (pre) {
+                wrapper.setAttribute('data-mermaid-src', pre.textContent.trim());
+                wrapper.setAttribute('data-mermaid-id', 'diagram-' + i);
+            }
+        });
+
         mermaid.initialize({
             startOnLoad: true,
             theme: 'default',
-            themeVariables: {
-                fontSize: '16px',
-                fontFamily: 'Inter Tight, system-ui, sans-serif',
-                primaryColor: '#6B2FA0',
-                primaryTextColor: '#fff',
-                primaryBorderColor: '#5A2590',
-                lineColor: '#666',
-                secondaryColor: '#f5f5f5',
-                tertiaryColor: '#fafafa'
-            },
-            flowchart: { useMaxWidth: false, htmlLabels: true, curve: 'basis', nodeSpacing: 50, rankSpacing: 60, padding: 20, wrappingWidth: 200 },
-            sequence: { useMaxWidth: false, actorFontSize: 15, messageFontSize: 14, noteFontSize: 14, height: 36, mirrorActors: false }
+            themeVariables: mermaidTheme,
+            flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', nodeSpacing: 30, rankSpacing: 40, padding: 15 },
+            sequence: { useMaxWidth: true, actorFontSize: 15, messageFontSize: 14, noteFontSize: 14, height: 36, mirrorActors: false }
         });
 
-        function expandDiagram(wrapper) {
-            var svg = wrapper.querySelector('svg');
-            if (svg) {
-                var clone = svg.cloneNode(true);
-                /* Remove fixed width/height so the SVG renders at natural size in the modal */
-                clone.removeAttribute('width');
-                clone.style.maxWidth = 'none';
-                clone.style.width = 'max-content';
-                clone.style.minWidth = '900px';
-                clone.style.height = 'auto';
-                document.getElementById('modal-body').innerHTML = '';
-                document.getElementById('modal-body').appendChild(clone);
-                document.getElementById('modal').classList.add('active');
-                document.body.style.overflow = 'hidden';
+        var modalCounter = 0;
+
+        async function expandDiagram(wrapper) {
+            var src = wrapper.getAttribute('data-mermaid-src');
+            if (!src) return;
+
+            var modalBody = document.getElementById('modal-body');
+            modalBody.innerHTML = '<div style="padding:40px;color:#aaa;">Rendering diagram…</div>';
+            document.getElementById('modal').classList.add('active');
+            document.body.style.overflow = 'hidden';
+
+            try {
+                /* Re-render at full natural size (useMaxWidth: false) for the modal */
+                mermaid.initialize({
+                    theme: 'default',
+                    themeVariables: mermaidTheme,
+                    flowchart: { useMaxWidth: false, htmlLabels: true, curve: 'basis', nodeSpacing: 50, rankSpacing: 60, padding: 20 },
+                    sequence: { useMaxWidth: false, actorFontSize: 15, messageFontSize: 14, noteFontSize: 14, height: 40, mirrorActors: false }
+                });
+                var id = 'modal-render-' + (++modalCounter);
+                var result = await mermaid.render(id, src);
+                modalBody.innerHTML = result.svg;
+                /* Restore page config */
+                mermaid.initialize({
+                    theme: 'default',
+                    themeVariables: mermaidTheme,
+                    flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', nodeSpacing: 30, rankSpacing: 40, padding: 15 },
+                    sequence: { useMaxWidth: true, actorFontSize: 15, messageFontSize: 14, noteFontSize: 14, height: 36, mirrorActors: false }
+                });
+            } catch (err) {
+                /* Fallback: just clone the inline SVG */
+                var svg = wrapper.querySelector('svg');
+                if (svg) {
+                    modalBody.innerHTML = svg.outerHTML;
+                } else {
+                    modalBody.innerHTML = '<div style="padding:40px;color:#e03e8e;">Could not render diagram.</div>';
+                }
             }
         }
 
