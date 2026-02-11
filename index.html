@@ -712,11 +712,12 @@ graph TD
 
             try {
                 /* Re-render at full natural size (useMaxWidth: false) for the modal */
+                var modalTheme = Object.assign({}, mermaidTheme, { fontSize: '20px' });
                 mermaid.initialize({
                     theme: 'default',
-                    themeVariables: mermaidTheme,
-                    flowchart: { useMaxWidth: false, htmlLabels: true, curve: 'basis', nodeSpacing: 50, rankSpacing: 60, padding: 20 },
-                    sequence: { useMaxWidth: false, actorFontSize: 15, messageFontSize: 14, noteFontSize: 14, height: 40, mirrorActors: false }
+                    themeVariables: modalTheme,
+                    flowchart: { useMaxWidth: false, htmlLabels: true, curve: 'basis', nodeSpacing: 50, rankSpacing: 60, padding: 24 },
+                    sequence: { useMaxWidth: false, actorFontSize: 20, messageFontSize: 18, noteFontSize: 18, height: 44, mirrorActors: false }
                 });
                 var id = 'modal-render-' + (++modalCounter);
                 var result = await mermaid.render(id, src);
